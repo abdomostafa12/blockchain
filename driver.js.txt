@@ -1,0 +1,82 @@
+"use strict";
+
+const blindSignatures = require('blind-signatures');
+const { Coin, COIN_RIS_LENGTH, IDENT_STR, BANK_STR } = require('./coin.js');
+const utils = require('./utils.js');
+
+const BANK_KEY = blindSignatures.keyGeneration({ b: 2048 });
+const N = BANK_KEY.keyPair.n.toString();
+const E = BANK_KEY.keyPair.e.toString();
+
+function signCoin(blindedCoinHash) {
+  return blindSignatures.sign({
+    blinded: blindedCoinHash,
+    key: BANK_KEY,
+  });
+}
+
+function parseCoin(s) {
+  let [cnst, amt, guid, leftHashes, rightHashes] = s.split('-');
+  if (cnst !== BANK_STR) {
+    throw new Error(`Invalid identity string: ${cnst} received, but ${BANK_STR} expected`);
+  }
+  let lh = leftHashes.split(',');
+  let rh = rightHashes.split(',');
+  return [lh, rh];
+}
+
+function acceptCoin(coin) {
+  const isValid = blindSignatures.verify({
+    unblinded: coin.signature,
+    message: coin.hash,
+    key: {
+      n: BigInt(coin.n),
+      e: BigInt(coin.e),
+    }
+  });
+
+  if (!isValid) {
+    throw new Error("Invalid coin signature!");
+  }
+
+  let [lh, rh] = parseCoin(coin.toString());
+  let ris = [];
+  let choice = Math.floor(Math.random() * 2);
+
+  for (let i = 0; i < COIN_RIS_LENGTH; i++) {
+    ris.push(choice === 0 ? lh[i] : rh[i]);
+  }
+
+  return ris;
+}
+
+function determineCheater(guid, ris1, ris2) {
+  console.log(`Checking double spending on coin: ${guid}`);
+
+  for (let i = 0; i < COIN_RIS_LENGTH; i++) {
+    const r1 = ris1[i];
+    const r2 = ris2[i];
+
+    if (r1 !== r2) {
+      let xored = utils.xorStrings(r1, r2);
+      if (xored.startsWith(IDENT_STR)) {
+        let identity = xored.slice(IDENT_STR.length);
+        console.log(`Coin owner is the cheater! Identity revealed: ${identity}`);
+        return;
+      }
+    }
+  }
+
+  console.log("Merchants are the cheaters (RIS strings are identical).");
+}
+
+let coin = new Coin('alice', 20, N, E);
+coin.signature = signCoin(coin.blinded);
+coin.unblind();
+
+let ris1 = acceptCoin(coin);
+let ris2 = acceptCoin(coin);
+
+determineCheater(coin.guid, ris1, ris2);
+console.log();
+determineCheater(coin.guid, ris1, ris1);
